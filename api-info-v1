@@ -1,0 +1,142 @@
+#!/bin/bash
+user="api"
+passwd="ipa"
+iface="eth0" 	# Интерфейс на котором определяем IP адрес
+port="3333" 	# Порт на котором работает API майнера
+hash1="Mh/s"
+confDir="/opt/mining/.conf" # Директория где находится временный файл
+# с информацией о майнире
+conf="apistat.conf" # Файл в котором находится информация о майнире
+remoteHost="https://api.hldns.ru" # Хост на который отправляется статистика
+url="api/v1.0"
+Time="15" # Время между отправкой статистики
+Repeat="3" # Количество отправок статистики в течении минуты
+# Проверяем существует ли директория для временного файла и сам файл
+# если нет, создаем диреторию и файл. В файл записывается информация
+# что все майнеры выключены
+if [ -d $confDir ] ; then
+	if [ -f $confDir/$conf ] ; then 
+		true
+	else : > $conf
+		echo "off" > $confDir/$conf
+	fi
+else mkdir -p $confDir ; : > $confDir/$conf
+	echo "off" > $confDir/$conf
+fi
+# Получаем какой майнер работает
+miner=$(cat $confDir/$conf)
+# Определяем IP адрес системы
+ip=$(ip addr list $iface | grep inet | head -n 1 | cut -d " " -f 6 | cut -d / -f 1)
+# Имя системы
+name=$(hostname)
+# Идентификационный номер, определяется на основании имени, но без каких-либо букв в имени
+id=$(hostname | sed 's/[a-zA-Z]//g')
+if [ $miner = "ethminer" ] ; then
+   Hash=$hash1
+fi
+# Функция которая собирает всю информацию о работе системы и майнера
+info()
+{
+# Определяем количество видеокарт NVIDIA в системе 
+NGPU=$(lspci | grep NVIDIA | grep VGA | wc -l)
+# Получаем данные о работе майнера
+getinfo=$(echo '{"id":0,"jsonrpc":"2.0","method":"miner_getstat1"}' | netcat -w 1 $ip $port)
+# Поучаем из майнера время его работы
+upMiner=$(echo $getinfo | jq '.result | .[1]' | sed 's/"//g' | \
+awk '{print int($1/1440)"days "int($1%1440/60)":"int($1%60)}')
+# Получем с майнера данные об общем хешрейте
+hashrate=$(bc <<< $(echo $getinfo | jq '.result | .[2]' | sed 's/"//g' | awk -F";" '{print $1}')/1000)
+# Получаем из системы время ее работы
+upSystem=$(awk '{print int($1/86400)"days "int($1%86400/3600)":"int(($1%3600)/60)}' /proc/uptime)
+# Получаем данные о хешрейте каждой карты в отдельности
+# и создаем массив из полученных данных
+HGPU=()
+if [ $NGPU -gt 5 ] ; then
+hGPU=$(bc <<< $(echo $getinfo | \
+jq '.result | .[3]' | sed 's/"//g' | awk -F";" '{print $6}')/1000)
+HGPU[5]=$hGPU
+fi
+if [ $NGPU -gt 4 ] ; then
+hGPU=$(bc <<< $(echo $getinfo | \
+jq '.result | .[3]' | sed 's/"//g' | awk -F";" '{print $5}')/1000)
+HGPU[4]=$hGPU
+fi 
+if [ $NGPU -gt 3 ] ; then
+hGPU=$(bc <<< $(echo $getinfo | \
+jq '.result | .[3]' | sed 's/"//g' | awk -F";" '{print $4}')/1000)
+HGPU[3]=$hGPU
+fi 
+if [ $NGPU -gt 2 ] ; then
+hGPU=$(bc <<< $(echo $getinfo | \
+jq '.result | .[3]' | sed 's/"//g' | awk -F";" '{print $3}')/1000)
+HGPU[2]=$hGPU
+fi 
+if [ $NGPU -gt 1 ] ; then
+hGPU=$(bc <<< $(echo $getinfo | \
+jq '.result | .[3]' | sed 's/"//g' | awk -F";" '{print $2}')/1000)
+HGPU[1]=$hGPU
+fi 
+if [ $NGPU -gt 0 ] ; then
+hGPU=$(bc <<< $(echo $getinfo | \
+jq '.result | .[3]' | sed 's/"//g' | awk -F";" '{print $1}')/1000)
+HGPU[0]=$hGPU
+fi 
+INFO=$(\
+printf "{\n"
+printf "\t\"method\": \"stats\",\n"
+printf "\t\"jsonrpc\": \"2.0\",\n"
+printf "\t\"id\": \"$id\",\n"
+printf "\t\"name\": \"$name\",\n"
+printf "\t\"ip\": \"$ip\",\n"
+printf "\t\"sysuptime\": \"$upSystem\",\n"
+printf "\t\"miner\": \"$miner\",\n"
+printf "\t\"uptimeminer\": \"$upMiner\",\n"
+printf "\t\"totalhashrate\": \"${hashrate}$Hash\",\n"
+
+# Получем данные о работе видеокарт
+for (( i=0; i < $NGPU; i++))
+do
+# uGPU - Загрузка видеокарт в % 
+uGPU[$i]=$(nvidia-smi --id=$i --query-gpu=utilization.gpu --format=csv | \
+awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+# tGPU - Температура
+tGPU[$i]=$(nvidia-smi --id=$i --query-gpu=temperature.gpu --format=csv | \
+awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+# fGPU - Скорость вращения вентиляторов
+fGPU[$i]=$(nvidia-smi --id=$i --query-gpu=fan.speed --format=csv | \
+awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+# pGPU - Потребляемая мощность видеокарты
+pGPU[$i]=$(bc <<< $(nvidia-smi --id=$i --query-gpu=power.draw --format=csv | \
+awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')/1)
+let "PGPU += $pGPU"
+# gGPU - Частота графического процессора видеокарты
+gGPU[$i]=$(nvidia-smi --id=$i --query-gpu=clocks.gr --format=csv | \
+awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+# mGPU - Частота работы памяти видекарты
+mGPU[$i]=$(nvidia-smi --id=$i --query-gpu=clocks.mem --format=csv | \
+awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+printf "\t\"GPU$i\": [ \"${HGPU[$i]}$Hash\", \"${uGPU[$i]}\", \"${tGPU[$i]}\",\
+ \"${fGPU[$i]}\", \"${pGPU[$i]}W\", \"${gGPU[$i]}\", \"${mGPU[$i]}\" ],\n"
+done
+
+printf "\t\"totalgpu\": \"$NGPU\",\n"
+printf "\t\"totalpower\": \"${PGPU}W\"\n"
+printf "}\n"
+)
+#echo $INFO
+curl -u $user:$passwd -j --ssl -H "Content-Type: application/json" -X POST -d "$INFO" $remoteHost/$url
+}
+
+# Функция для включения сбора статистики и ее отправки
+main()
+{ for (( i=0; i < $Repeat; i++))
+do
+	info; let R=($Repeat - 1)
+	if [ $i -lt $R ] ; then
+	sleep $Time
+	fi
+done
+}
+
+main
+

@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+
+{% block addheader %}
+<h2>Вход в систему мониторинга</h2>
+{% endblock %}
+
+{% block data %}
+<div class="login">
+  <form class="login-form" action="/pass" method="post">
+    <p class="login-text">
+      <span class="fa-stack fa-lg">
+        <i class="fa fa-circle fa-stack-2x"></i>
+        <i class="fa fa-lock fa-stack-1x"></i>
+      </span>
+    </p>
+    <input type="text" name="login" class="login-username" autofocus="true"
+            required="true" placeholder="Login" />
+    <input type="password" name="passwd" class="login-password" required="true"
+            placeholder="Password" />
+    <input type="submit" name="Login" value="Вход" class="login-submit" />
+  </form>
+</div>
+{% endblock %}

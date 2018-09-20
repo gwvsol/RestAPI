@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8"/>
+		<meta name="viewport" content="width=device-width" initial-scale="1.0" maximum-scale="1.0" minimum-scale="1.0"/>
+		{% block head %}
+		{% endblock %}
+		    <link rel="shortcut icon" href="static/images/logo.png" type="image/png" />
+        <link type="text/css" rel="stylesheet" href="static/css/style.css" />
+		<title>{{ the_title }}</title>
+    <link href="https://fonts.googleapis.com/css?family=Lato" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Pacifico" rel="stylesheet">
+	</head>
+	<body>
+    <content>
+      <section>
+				<header class="centre">
+        {% block header %}
+          {% include 'header.html' %}
+					{% block addheader %}
+					{% endblock %}
+				</header>
+        {% endblock %}
+
+        {% block data %}
+        {% endblock %}
+      </section>
+    <div class="menu">
+      {% block menu %}
+        {% include 'menu.html'%}
+      {%endblock%}
+    </div>
+  </content>
+      <script  src="static/js/index.js"></script>
+	</body>
+	<footer class="centre">
+		&copy; 2018, <a class="footer" href="https://www.facebook.com/Syslighstar" target="_blank">SYSLIGHSTAR</a>
+	</footer>
+</html>

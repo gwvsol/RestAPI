@@ -1,0 +1,125 @@
+#!/bin/bash
+user="api"
+passwd="ipa"
+send="on"
+iface="eth0" 	# Интерфейс на котором определяем IP адрес
+port="3333" 	# Порт на котором работает API майнера
+hash1="Mh/s"	# В чем измеряется хешрейт майнера Etherminer
+# Директория где находится временный файл с информацией о майнире
+confDir="/opt/mining/.conf"
+conf="apistat.conf" # Файл в котором находится информация о майнире
+remoteHost="https://api.hldns.ru" # Хост на который отправляется статистика
+url="api/v1.0"	# Где находится API Rest сервера
+Time="15" 	# Время между отправкой статистики
+Repeat="3" 	# Количество отправок статистики в течении минуты
+# Проверяем разрешена отправка данных на REST Api сервер
+if [ $send = "off" ] ; then
+   exit
+fi 
+# Проверяем существует ли директория для временного файла и сам файл
+# если нет, создаем диреторию и файл. В файл записывается информация
+# что все майнеры выключены
+if [ -d $confDir ] ; then
+	if [ -f $confDir/$conf ] ; then 
+		true
+	else : > $conf
+		echo "off" > $confDir/$conf
+	fi
+else mkdir -p $confDir ; : > $confDir/$conf
+	echo "off" > $confDir/$conf
+fi
+# Получаем какой майнер работает
+miner=$(cat $confDir/$conf)
+# Определяем IP адрес системы
+ip=$(ip addr list $iface | grep inet | head -n 1 | cut -d " " -f 6 | cut -d / -f 1)
+# Имя системы
+name=$(hostname)
+# Идентификационный номер, определяется на основании имени, но без каких-либо букв в имени
+id=$(hostname | sed 's/[a-zA-Z]//g')
+# Определяем какой парамерт используется в хешрейте
+if [ $miner = "ethminer" ] ; then
+   Hash=$hash1
+fi
+
+# Функция которая собирает всю информацию о работе системы и майнера
+
+info()
+{
+# Определяем количество видеокарт NVIDIA в системе 
+NGPU=$(lspci | grep NVIDIA | grep VGA | wc -l)
+
+# Получаем данные о работе майнера
+getinfo=$(echo '{"id":0,"jsonrpc":"2.0","method":"miner_getstat1"}' | netcat -w 1 $ip $port)
+
+# Поучаем из майнера время его работы
+upMiner=$(echo $getinfo | jq '.result | .[1]' | sed 's/"//g' | \
+awk '{print int($1/1440)"days "int($1%1440/60)":"int($1%60)}')
+
+# Получем с майнера данные об общем хешрейте
+hashrate=$(bc <<< $(echo $getinfo | jq '.result | .[2]' | sed 's/"//g' | awk -F";" '{print $1}')/1000)
+
+# Получаем из системы время ее работы
+upSystem=$(awk '{print int($1/86400)"days "int($1%86400/3600)":"int(($1%3600)/60)}' /proc/uptime)
+
+# Получем данные о работе видеокарт
+TGPU=() # Создаем пустой массив для данных температуры
+FGPU=() # Создаем пустой массив для данных кулера
+PGPU="0" # Обнуляем данные о мощности видеокарт
+
+for (( i=0; i < $NGPU; i++))
+do
+# tGPU - Температура
+  tGPU[$i]=$(nvidia-smi --id=$i --query-gpu=temperature.gpu --format=csv | \
+  awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+  TGPU[$i]=${tGPU[$i]}
+# fGPU - Скорость вращения вентиляторов
+  fGPU[$i]=$(nvidia-smi --id=$i --query-gpu=fan.speed --format=csv | \
+  awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')
+  FGPU[$i]=${fGPU[$i]}
+# pGPU - Потребляемая мощность видеокарты
+  pGPU[$i]=$(bc <<< $(nvidia-smi --id=$i --query-gpu=power.draw --format=csv | \
+  awk 'BEGIN{FS="\n"; RS=""} {print $2}' | awk '{print $1}')/1)
+  let "PGPU += ${pGPU[$i]}"
+done
+# Находим максимальное занение температуры
+tgpu=$(echo ${TGPU[@]} | grep -Eo '[0-9]+' | sort -rn | head -n 1)
+# Находим максимальное значение скорости вращения вентиляторов
+fgpu=$(echo ${FGPU[@]} | grep -Eo '[0-9]+' | sort -rn | head -n 1)
+
+# Формируем JSON
+
+INFO=$(\
+printf "{\n"
+printf "\t\"method\": \"stats\",\n"
+printf "\t\"jsonrpc\": \"2.0\",\n"
+printf "\t\"id\": \"$id\",\n"
+printf "\t\"name\": \"$name\",\n"
+printf "\t\"sysuptime\": \"$upSystem\",\n"
+printf "\t\"miner\": \"$miner\",\n"
+printf "\t\"uptimeminer\": \"$upMiner\",\n"
+printf "\t\"totalhashrate\": \"${hashrate}$Hash\",\n"
+printf "\t\"maxtemp\": \"${tgpu}C\",\n"
+printf "\t\"maxfan\": \"${fgpu}\",\n"
+printf "\t\"totalgpu\": \"$NGPU\",\n"
+printf "\t\"totalpower\": \"${PGPU}W\"\n"
+printf "}\n")
+
+#echo $INFO
+# Отправляем JSON на REST API сервер
+curl -s -u $user:$passwd -j --ssl -H "Content-Type: application/json" -X POST -d "$INFO" $remoteHost/$url
+}
+#info
+
+# Функция для включения сбора статистики и ее отправки
+main() { 
+for (( q=0; q < $Repeat; q++))
+do
+   info; let R=($Repeat - 1)
+   if [ $q -lt $R ] ; then
+      sleep $Time
+   fi
+done
+}
+
+main
+

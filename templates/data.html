@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+
+{% block head %}
+  <meta http-equiv="Refresh" content="20">
+{% endblock %}
+
+{% block data %}
+<div class="centre">
+  <div id="table">
+    <div id="headerTable">
+      {% for head in table_head %}
+             <p>{{ head }}</p>
+      {% endfor %}
+    </div>
+    {% for rows in table_data %}
+        <div id="rowTable">
+            {% for row in rows %}
+                 <p>{{ row }}</p>
+            {% endfor %}
+        </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
